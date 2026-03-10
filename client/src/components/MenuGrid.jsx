@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import MenuItem from './MenuItem';
 
 function MenuGrid({ items }) {
+  const navigate = useNavigate();
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -17,8 +19,8 @@ function MenuGrid({ items }) {
   });
 
   const handleItemClick = (item) => {
-    alert(`Clicked: ${item.name}\n\nAR viewer will be added on Day 2!`);
-    // We'll navigate to AR view on Day 2
+    // Navigate to AR view page
+    navigate(`/ar/${item.id}`);
   };
 
   return (
@@ -82,3 +84,4 @@ function MenuGrid({ items }) {
 }
 
 export default MenuGrid;
+

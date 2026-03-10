@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 
-function MenuItem({ item, onClick }) {
+// Memoized MenuItem component for better performance
+const MenuItem = memo(function MenuItem({ item, onClick }) {
+  // Memoized click handler
+  const handleClick = useCallback(() => {
+    onClick(item);
+  }, [onClick, item]);
+
+  // Memoized image error handler
+  const handleImageError = useCallback((e) => {
+    e.target.src = 'https://via.placeholder.com/400x300?text=Food+Image';
+  }, []);
+
   return (
     <div 
       className="card cursor-pointer group"
-      onClick={() => onClick(item)}
+      onClick={handleClick}
     >
       {/* Image */}
       <div className="relative h-48 overflow-hidden bg-gray-200">
@@ -12,9 +23,8 @@ function MenuItem({ item, onClick }) {
           src={item.image} 
           alt={item.name}
           className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-          onError={(e) => {
-            e.target.src = 'https://via.placeholder.com/400x300?text=Food+Image';
-          }}
+          onError={handleImageError}
+          loading="lazy"
         />
         
         {/* Category Badge */}
@@ -53,6 +63,6 @@ function MenuItem({ item, onClick }) {
       </div>
     </div>
   );
-}
+});
 
 export default MenuItem;

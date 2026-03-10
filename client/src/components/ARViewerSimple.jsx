@@ -88,8 +88,8 @@ function ARViewerSimple({ item }) {
         {/* 3D Model */}
         <a-entity
           gltf-model={item.modelUrl || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb'}
-          position="0 0 -3"
-          scale="0.5 0.5 0.5"
+          position="0 0 -1.5"
+          scale="2 2 2"
           rotation="0 0 0"
         ></a-entity>
 

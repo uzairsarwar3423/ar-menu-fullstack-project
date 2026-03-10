@@ -1,8 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader';
 
-function WebAR({ item, onClose }) {
+// Memoized WebAR component for performance
+const WebAR = memo(function WebAR({ item, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -11,18 +13,38 @@ function WebAR({ item, onClose }) {
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
   const modelRef = useRef(null);
+  const animationFrameRef = useRef(null);
   const isDraggingRef = useRef(false);
   const previousTouchRef = useRef({ x: 0, y: 0 });
 
-  // Handle touch/mouse interaction for model rotation
-  const handlePointerDown = (e) => {
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    // Cancel animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    
+    // Stop camera
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+    }
+
+    // Cleanup Three.js
+    if (rendererRef.current) {
+      rendererRef.current.dispose();
+    }
+  }, []);
+
+  // Pointer handlers for model rotation
+  const handlePointerDown = useCallback((e) => {
     isDraggingRef.current = true;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     previousTouchRef.current = { x: clientX, y: clientY };
-  };
+  }, []);
 
-  const handlePointerMove = (e) => {
+  const handlePointerMove = useCallback((e) => {
     if (!isDraggingRef.current || !modelRef.current) return;
 
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -36,124 +58,176 @@ function WebAR({ item, onClose }) {
     modelRef.current.rotation.x += deltaY * 0.01;
 
     previousTouchRef.current = { x: clientX, y: clientY };
-  };
-
-  const handlePointerUp = () => {
-    isDraggingRef.current = false;
-  };
-
-  useEffect(() => {
-    initAR();
-    return () => cleanup();
   }, []);
 
-  const initAR = async () => {
-    try {
-      // Get camera access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }, // Back camera
-        audio: false
+  const handlePointerUp = useCallback(() => {
+    isDraggingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const initAR = async () => {
+      try {
+        // Get camera access
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false
+        });
+
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+
+        // Setup Three.js
+        setupThreeJS();
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Camera error:', err);
+        if (mounted) {
+          setError('Camera access denied. Please allow camera access.');
+          setIsLoading(false);
+        }
+      }
+    };
+
+    const setupThreeJS = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // Scene
+      const scene = new THREE.Scene();
+      sceneRef.current = scene;
+
+      // Camera
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      camera.position.z = 5;
+      cameraRef.current = camera;
+
+      // Optimized Renderer
+      const renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance'
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(0x000000, 0);
+      rendererRef.current = renderer;
+
+      // Handle context loss
+      renderer.domElement.addEventListener('webglcontextlost', (event) => {
+        event.preventDefault();
+        console.warn('WebGL context lost');
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+        }
       });
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+      renderer.domElement.addEventListener('webglcontextrestored', () => {
+        console.log('WebGL context restored');
+        if (modelRef.current && sceneRef.current && cameraRef.current) {
+          animate();
+        }
+      });
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(1, 1, 1);
+      scene.add(directionalLight);
+
+      // Setup DRACO loader for compressed GLTF models
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+      // Load 3D Model
+      const loader = new GLTFLoader();
+      loader.setDRACOLoader(dracoLoader);
+      
+      const modelUrl = item.modelUrl || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
+
+      loader.load(
+        modelUrl,
+        (gltf) => {
+          if (!mounted) return;
+          
+          const model = gltf.scene;
+          model.scale.set(2.0, 2.0, 2.0);
+          model.position.set(0, -1, -1.5);
+          scene.add(model);
+          modelRef.current = model;
+
+          // Start animation loop
+          animate();
+        },
+        undefined,
+        (error) => {
+          console.error('Model loading error:', error);
+          // Try loading without Draco if it fails
+          tryNonCompressedModel();
+        }
+      );
+
+      // Fallback: Try loading without Draco compression
+      const tryNonCompressedModel = () => {
+        const fallbackLoader = new GLTFLoader();
+        fallbackLoader.load(
+          modelUrl,
+          (gltf) => {
+            if (!mounted) return;
+            
+            const model = gltf.scene;
+            model.scale.set(2.0, 2.0, 2.0);
+            model.position.set(0, -1, -1.5);
+            scene.add(model);
+            modelRef.current = model;
+            animate();
+          },
+          undefined,
+          (err) => {
+            console.error('Fallback model loading also failed:', err);
+          }
+        );
+      };
+    };
+
+    const animate = () => {
+      if (!mounted) return;
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+
+      if (modelRef.current && !isDraggingRef.current) {
+        // Auto-rotate when not dragging
+        modelRef.current.rotation.y += 0.005;
       }
 
-      // Setup Three.js
-      setupThreeJS();
-      setIsLoading(false);
-    } catch (err) {
-      console.error('Camera error:', err);
-      setError('Camera access denied. Please allow camera access.');
-      setIsLoading(false);
-    }
-  };
-
-  const setupThreeJS = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // Scene
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-
-    // Camera
-    const camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
-    camera.position.z = 5;
-    cameraRef.current = camera;
-
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({
-      canvas: canvas,
-      alpha: true,
-      antialias: true
-    });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x000000, 0);
-    rendererRef.current = renderer;
-
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(1, 1, 1);
-    scene.add(directionalLight);
-
-    // Load 3D Model
-    const loader = new GLTFLoader();
-    const modelUrl = item.modelUrl || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
-
-    loader.load(
-      modelUrl,
-      (gltf) => {
-        const model = gltf.scene;
-        model.scale.set(0.5, 0.5, 0.5);
-        model.position.set(0, -1, -3);
-        scene.add(model);
-        modelRef.current = model;
-
-        // Animate
-        animate();
-      },
-      undefined,
-      (error) => {
-        console.error('Model loading error:', error);
+      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
-    );
-  };
+    };
 
-  const animate = () => {
-    requestAnimationFrame(animate);
-
-    if (modelRef.current) {
-      // Rotate model slowly
-      modelRef.current.rotation.y += 0.01;
-    }
-
-    if (rendererRef.current && sceneRef.current && cameraRef.current) {
-      rendererRef.current.render(sceneRef.current, cameraRef.current);
-    }
-  };
-
-  const cleanup = () => {
-    // Stop camera
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
-    }
-
-    // Cleanup Three.js
-    if (rendererRef.current) {
-      rendererRef.current.dispose();
-    }
-  };
+    initAR();
+    
+    return () => {
+      mounted = false;
+      cleanup();
+    };
+  }, [item.modelUrl, cleanup]);
 
   if (error) {
     return (
@@ -181,9 +255,10 @@ function WebAR({ item, onClose }) {
         className="absolute inset-0 w-full h-full object-cover"
         playsInline
         muted
+        autoPlay
       />
 
-      {/* Three.js Canvas (3D Model) */}
+      {/* Three.js Canvas (3D Model) - Interactive */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
@@ -231,7 +306,7 @@ function WebAR({ item, onClose }) {
         <div className="bg-white/90 backdrop-blur-sm rounded-xl p-4 shadow-xl">
           <div className="text-center">
             <p className="text-gray-800 font-semibold mb-2">
-              👆 Point camera at a flat surface
+              👆 Drag to rotate model • Point at flat surface
             </p>
             <p className="text-sm text-gray-600">
               The 3D model will appear on your table
@@ -248,6 +323,6 @@ function WebAR({ item, onClose }) {
       </div>
     </div>
   );
-}
+});
 
 export default WebAR;

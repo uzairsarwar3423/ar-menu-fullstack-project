@@ -1,27 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MenuItem from './MenuItem';
+
+// Memoized MenuItem component wrapper
+const MenuItemMemo = memo(MenuItem);
 
 function MenuGrid({ items }) {
   const navigate = useNavigate();
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Get unique categories
-  const categories = ['All', ...new Set(items.map(item => item.category))];
+  // Memoized categories calculation
+  const categories = useMemo(() => 
+    ['All', ...new Set(items.map(item => item.category))], 
+    [items]
+  );
 
-  // Filter items
-  const filteredItems = items.filter(item => {
-    const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         item.nameUrdu.includes(searchQuery);
-    return matchesCategory && matchesSearch;
-  });
+  // Memoized filtered items
+  const filteredItems = useMemo(() => {
+    return items.filter(item => {
+      const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           item.nameUrdu.includes(searchQuery);
+      return matchesCategory && matchesSearch;
+    });
+  }, [items, selectedCategory, searchQuery]);
 
   const handleItemClick = (item) => {
-    // Navigate to AR view page
     navigate(`/ar/${item.id}`);
   };
+
+  // Memoized category button click handler
+  const handleCategoryClick = useMemo(() => 
+    (category) => () => setSelectedCategory(category), 
+    []
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -43,7 +56,7 @@ function MenuGrid({ items }) {
           {categories.map(category => (
             <button
               key={category}
-              onClick={() => setSelectedCategory(category)}
+              onClick={handleCategoryClick(category)}
               className={`px-4 py-2 rounded-lg font-semibold transition-all ${
                 selectedCategory === category
                   ? 'bg-primary text-white shadow-md'
@@ -67,7 +80,7 @@ function MenuGrid({ items }) {
       {filteredItems.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredItems.map(item => (
-            <MenuItem 
+            <MenuItemMemo 
               key={item.id} 
               item={item}
               onClick={handleItemClick}

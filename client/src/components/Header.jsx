@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { restaurantInfo } from '../data/menuData';
 
-function Header() {
+// Memoized Header component for performance
+const Header = memo(function Header() {
   return (
     <header className="bg-gradient-to-r from-primary to-secondary text-white shadow-lg">
       <div className="max-w-6xl mx-auto px-4 py-6">
@@ -32,6 +33,6 @@ function Header() {
       </div>
     </header>
   );
-}
+});
 
 export default Header;

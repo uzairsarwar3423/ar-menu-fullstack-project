@@ -1,19 +1,19 @@
-import React, { Suspense } from 'react';
+import React, { Suspense, memo, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { useGLTF, OrbitControls, PerspectiveCamera, Environment } from '@react-three/drei';
+import { useGLTF, OrbitControls, Environment } from '@react-three/drei';
 
-// 3D Model Component
-function Model({ url }) {
+// Memoized Model Component with Draco support
+const Model = memo(function Model({ url }) {
   const { scene } = useGLTF(url);
   
   return (
     <primitive 
-      object={scene} 
-      scale={1.5}
-      position={[0, -1, 0]}
+      object={scene.clone()} 
+      scale={3}
+      position={[0, -0.5, 0]}
     />
   );
-}
+});
 
 // Loading Component
 function Loader() {
@@ -27,13 +27,39 @@ function Loader() {
   );
 }
 
+// Preload 3D models
+useGLTF.preload('/models/burger.glb');
+useGLTF.preload('/models/pizza.glb');
+useGLTF.preload('/models/fries.glb');
+
 // Main AR Viewer Component
-function ARViewer({ modelUrl, itemName }) {
+const ARViewer = memo(function ARViewer({ modelUrl, itemName }) {
+  const canvasRef = useRef(null);
+
   return (
     <div className="w-full h-[500px] bg-gray-100 rounded-xl overflow-hidden shadow-lg">
       <Canvas
+        ref={canvasRef}
         camera={{ position: [0, 0, 5], fov: 50 }}
         style={{ background: 'linear-gradient(to bottom, #f0f9ff, #e0f2fe)' }}
+        gl={{ 
+          antialias: true, 
+          alpha: true,
+          powerPreference: 'high-performance',
+          preserveDrawingBuffer: true
+        }}
+        dpr={[1, 2]}
+        onCreated={({ gl }) => {
+          // Handle WebGL context loss
+          gl.domElement.addEventListener('webglcontextlost', (event) => {
+            event.preventDefault();
+            console.warn('WebGL context lost in ARViewer');
+          });
+          
+          gl.domElement.addEventListener('webglcontextrestored', () => {
+            console.log('WebGL context restored in ARViewer');
+          });
+        }}
       >
         {/* Lighting */}
         <ambientLight intensity={0.5} />
@@ -55,6 +81,8 @@ function ARViewer({ modelUrl, itemName }) {
           enableRotate={true}
           minDistance={2}
           maxDistance={10}
+          enableDamping={true}
+          dampingFactor={0.05}
         />
       </Canvas>
       
@@ -68,6 +96,6 @@ function ARViewer({ modelUrl, itemName }) {
       </div>
     </div>
   );
-}
+});
 
 export default ARViewer;

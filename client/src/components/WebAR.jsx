@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader';
 
-// Memoized WebAR component for performance
 const WebAR = memo(function WebAR({ item, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
@@ -17,26 +17,33 @@ const WebAR = memo(function WebAR({ item, onClose }) {
   const isDraggingRef = useRef(false);
   const previousTouchRef = useRef({ x: 0, y: 0 });
 
-  // Cleanup function
+  // Detect mobile screen size
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const cleanup = useCallback(() => {
-    // Cancel animation frame
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
     
-    // Stop camera
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = videoRef.current.srcObject.getTracks();
       tracks.forEach(track => track.stop());
     }
 
-    // Cleanup Three.js
     if (rendererRef.current) {
       rendererRef.current.dispose();
     }
   }, []);
 
-  // Pointer handlers for model rotation
   const handlePointerDown = useCallback((e) => {
     isDraggingRef.current = true;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -53,7 +60,6 @@ const WebAR = memo(function WebAR({ item, onClose }) {
     const deltaX = clientX - previousTouchRef.current.x;
     const deltaY = clientY - previousTouchRef.current.y;
 
-    // Rotate model based on drag direction
     modelRef.current.rotation.y += deltaX * 0.01;
     modelRef.current.rotation.x += deltaY * 0.01;
 
@@ -69,7 +75,6 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
     const initAR = async () => {
       try {
-        // Get camera access
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment' },
           audio: false
@@ -85,7 +90,6 @@ const WebAR = memo(function WebAR({ item, onClose }) {
           videoRef.current.play();
         }
 
-        // Setup Three.js
         setupThreeJS();
         setIsLoading(false);
       } catch (err) {
@@ -101,21 +105,26 @@ const WebAR = memo(function WebAR({ item, onClose }) {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      // Scene
+      // Responsive values based on screen size
+      const isMobileScreen = window.innerWidth < 768;
+      const modelScale = isMobileScreen ? 0.6 : 1.5;
+      const cameraZ = isMobileScreen ? 3 : 2;
+      const modelZ = isMobileScreen ? -1.5 : -2;
+      const modelY = isMobileScreen ? 0 : -0.5;
+
       const scene = new THREE.Scene();
       sceneRef.current = scene;
 
-      // Camera
       const camera = new THREE.PerspectiveCamera(
-        75,
+        60,
         window.innerWidth / window.innerHeight,
-        0.1,
+        0.01,
         1000
       );
-      camera.position.z = 5;
+      camera.position.set(0, 0, 0);
+      camera.lookAt(0, 0, -cameraZ);
       cameraRef.current = camera;
 
-      // Optimized Renderer
       const renderer = new THREE.WebGLRenderer({
         canvas: canvas,
         alpha: true,
@@ -127,35 +136,26 @@ const WebAR = memo(function WebAR({ item, onClose }) {
       renderer.setClearColor(0x000000, 0);
       rendererRef.current = renderer;
 
-      // Handle context loss
       renderer.domElement.addEventListener('webglcontextlost', (event) => {
         event.preventDefault();
         console.warn('WebGL context lost');
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-        }
       });
 
-      renderer.domElement.addEventListener('webglcontextrestored', () => {
-        console.log('WebGL context restored');
-        if (modelRef.current && sceneRef.current && cameraRef.current) {
-          animate();
-        }
-      });
-
-      // Lights
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      directionalLight.position.set(1, 1, 1);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(2, 4, 2);
       scene.add(directionalLight);
 
-      // Setup DRACO loader for compressed GLTF models
+      const fillLight = new THREE.DirectionalLight(0x88ccff, 0.3);
+      fillLight.position.set(-2, 2, -1);
+      scene.add(fillLight);
+
       const dracoLoader = new DRACOLoader();
       dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
 
-      // Load 3D Model
       const loader = new GLTFLoader();
       loader.setDRACOLoader(dracoLoader);
       
@@ -167,23 +167,20 @@ const WebAR = memo(function WebAR({ item, onClose }) {
           if (!mounted) return;
           
           const model = gltf.scene;
-          model.scale.set(2.0, 2.0, 2.0);
-          model.position.set(0, -1, -1.5);
+          model.scale.set(modelScale, modelScale, modelScale);
+          model.position.set(0, modelY, modelZ);
           scene.add(model);
           modelRef.current = model;
 
-          // Start animation loop
           animate();
         },
         undefined,
         (error) => {
           console.error('Model loading error:', error);
-          // Try loading without Draco if it fails
           tryNonCompressedModel();
         }
       );
 
-      // Fallback: Try loading without Draco compression
       const tryNonCompressedModel = () => {
         const fallbackLoader = new GLTFLoader();
         fallbackLoader.load(
@@ -192,8 +189,10 @@ const WebAR = memo(function WebAR({ item, onClose }) {
             if (!mounted) return;
             
             const model = gltf.scene;
-            model.scale.set(2.0, 2.0, 2.0);
-            model.position.set(0, -1, -1.5);
+            // Use slightly larger scale for fallback
+            const fallbackScale = isMobileScreen ? 0.7 : 1.8;
+            model.scale.set(fallbackScale, fallbackScale, fallbackScale);
+            model.position.set(0, modelY, modelZ);
             scene.add(model);
             modelRef.current = model;
             animate();
@@ -212,7 +211,6 @@ const WebAR = memo(function WebAR({ item, onClose }) {
       animationFrameRef.current = requestAnimationFrame(animate);
 
       if (modelRef.current && !isDraggingRef.current) {
-        // Auto-rotate when not dragging
         modelRef.current.rotation.y += 0.005;
       }
 
@@ -249,7 +247,7 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black">
-      {/* Video Background (Camera Feed) */}
+      {/* Video Background */}
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
@@ -258,7 +256,7 @@ const WebAR = memo(function WebAR({ item, onClose }) {
         autoPlay
       />
 
-      {/* Three.js Canvas (3D Model) - Interactive */}
+      {/* Three.js Canvas */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
@@ -289,33 +287,21 @@ const WebAR = memo(function WebAR({ item, onClose }) {
             onClick={onClose}
             className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded-lg font-semibold transition"
           >
-            ✕ Exit AR
+            ✕ Exit
           </button>
 
           <div className="text-center">
-            <p className="font-semibold">{item.name}</p>
+            <p className="font-bold text-lg">{item.name}</p>
             <p className="text-sm opacity-75">PKR {item.price}</p>
           </div>
 
-          <div className="w-20"></div>
+          <div className="w-16"></div>
         </div>
       </div>
 
-      {/* Bottom Instructions */}
-      <div className="absolute bottom-0 left-0 right-0 p-6">
-        <div className="bg-white/90 backdrop-blur-sm rounded-xl p-4 shadow-xl">
-          <div className="text-center">
-            <p className="text-gray-800 font-semibold mb-2">
-              👆 Drag to rotate model • Point at flat surface
-            </p>
-            <p className="text-sm text-gray-600">
-              The 3D model will appear on your table
-            </p>
-          </div>
-        </div>
-      </div>
+    
 
-      {/* Center Target */}
+      {/* Center Target Reticle */}
       <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
         <div className="w-32 h-32 border-4 border-white/50 rounded-full flex items-center justify-center">
           <div className="w-2 h-2 bg-white rounded-full"></div>

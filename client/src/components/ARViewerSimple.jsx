@@ -2,7 +2,30 @@ import React, { useEffect, useRef, useState } from 'react';
 
 function ARViewerSimple({ item }) {
   const [arActive, setArActive] = useState(false);
+  const [modelScale, setModelScale] = useState('2 2 2');
   const sceneRef = useRef(null);
+
+  // Responsive scale based on screen size
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      let scale;
+      if (width < 640) {
+        scale = '0.5 0.5 0.5'; // Small mobile
+      } else if (width < 768) {
+        scale = '0.8 0.8 0.8'; // Mobile
+      } else if (width < 1024) {
+        scale = '1.2 1.2 1.2'; // Tablet
+      } else {
+        scale = '2 2 2'; // Desktop
+      }
+      setModelScale(scale);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     if (arActive) {
@@ -89,7 +112,7 @@ function ARViewerSimple({ item }) {
         <a-entity
           gltf-model={item.modelUrl || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb'}
           position="0 0 -1.5"
-          scale="2 2 2"
+          scale={modelScale}
           rotation="0 0 0"
         ></a-entity>
 

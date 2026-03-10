@@ -1,15 +1,15 @@
-import React, { Suspense, memo, useEffect, useRef } from 'react';
+import React, { Suspense, memo, useEffect, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useGLTF, OrbitControls, Environment } from '@react-three/drei';
 
-// Memoized Model Component with Draco support
-const Model = memo(function Model({ url }) {
+// Memoized Model Component with responsive scale
+const Model = memo(function Model({ url, scale = 1 }) {
   const { scene } = useGLTF(url);
   
   return (
     <primitive 
       object={scene.clone()} 
-      scale={3}
+      scale={scale}
       position={[0, -0.5, 0]}
     />
   );
@@ -35,9 +35,30 @@ useGLTF.preload('/models/fries.glb');
 // Main AR Viewer Component
 const ARViewer = memo(function ARViewer({ modelUrl, itemName }) {
   const canvasRef = useRef(null);
+  const [scale, setScale] = useState(3);
+
+  // Responsive scale based on screen size
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      if (width < 640) {
+        setScale(0.8); // Small mobile
+      } else if (width < 768) {
+        setScale(1.0); // Mobile
+      } else if (width < 1024) {
+        setScale(1.5); // Tablet
+      } else {
+        setScale(2.0); // Desktop
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   return (
-    <div className="w-full h-[500px] bg-gray-100 rounded-xl overflow-hidden shadow-lg">
+    <div className="w-full h-64 sm:h-80 md:h-96 lg:h-[500px] bg-gray-100 rounded-xl overflow-hidden shadow-lg">
       <Canvas
         ref={canvasRef}
         camera={{ position: [0, 0, 5], fov: 50 }}
@@ -71,7 +92,7 @@ const ARViewer = memo(function ARViewer({ modelUrl, itemName }) {
         
         {/* 3D Model */}
         <Suspense fallback={null}>
-          <Model url={modelUrl} />
+          <Model url={modelUrl} scale={scale} />
         </Suspense>
         
         {/* Controls */}

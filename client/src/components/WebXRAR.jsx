@@ -4,26 +4,52 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader';
 
-// Check WebXR support
+// Check WebXR support with feature detection
 const checkXRSupport = async () => {
   if (!navigator.xr) {
-    return { supported: false, reason: 'WebXR not available' };
+    return { 
+      supported: false, 
+      supportedFeatures: { hitTest: false, localFloor: false, domOverlay: false },
+      reason: 'WebXR not available in this browser' 
+    };
   }
   try {
     const supported = await navigator.xr.isSessionSupported('immersive-ar');
-    return { supported, reason: supported ? null : 'AR not supported on this device' };
+    if (!supported) {
+      return { 
+        supported: false, 
+        supportedFeatures: { hitTest: false, localFloor: false, domOverlay: false },
+        reason: 'AR is not supported on this device/browser' 
+      };
+    }
+
+    // Check which features are supported
+    const features = { hitTest: false, localFloor: false, domOverlay: false };
+    
+    // Try to check feature support (this is a best-effort check)
+    // We'll try to request with optional features and see what works
+    return { 
+      supported: true, 
+      supportedFeatures: features,
+      reason: null 
+    };
   } catch (e) {
-    return { supported: false, reason: e.message };
+    return { 
+      supported: false, 
+      supportedFeatures: { hitTest: false, localFloor: false, domOverlay: false },
+      reason: e.message 
+    };
   }
 };
 
-function WebXRAR({ item, onClose }) {
+function WebXRAR({ item, onClose, onFallback }) {
   const containerRef = useRef(null);
   const navigate = useNavigate();
   
   const [status, setStatus] = useState('checking'); // checking, initializing, searching, ready, error
   const [error, setError] = useState(null);
   const [modelPlaced, setModelPlaced] = useState(false);
+  const [useHitTest, setUseHitTest] = useState(true);
   
   const xrSessionRef = useRef(null);
   const xrRefSpaceRef = useRef(null);
@@ -57,8 +83,12 @@ function WebXRAR({ item, onClose }) {
         
         if (!supported) {
           if (mounted) {
-            setError(reason || 'AR not supported');
+            setError(reason || 'AR not supported on this device');
             setStatus('error');
+            // Offer fallback if available
+            if (onFallback) {
+              setTimeout(() => onFallback(), 2000);
+            }
           }
           return;
         }
@@ -67,11 +97,52 @@ function WebXRAR({ item, onClose }) {
 
         setStatus('initializing');
 
-        // Request AR session
-        const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test', 'local-floor'],
-          optionalFeatures: ['dom-overlay'],
-        });
+        // Try to request AR session with flexible features
+        let session = null;
+        let hitTestSupported = false;
+        
+        // Try with all features first (hit-test as optional)
+        try {
+          session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['local-floor'],
+            optionalFeatures: ['hit-test', 'dom-overlay'],
+          });
+          hitTestSupported = true;
+        } catch (e) {
+          console.log('Full AR features not supported, trying simpler config...');
+          
+          // Try with just viewer space (most basic AR)
+          try {
+            session = await navigator.xr.requestSession('immersive-ar', {
+              requiredFeatures: ['viewer-space'],
+              optionalFeatures: ['dom-overlay'],
+            });
+            hitTestSupported = false;
+          } catch (e2) {
+            // Last resort - try any AR session
+            try {
+              session = await navigator.xr.requestSession('immersive-ar');
+              hitTestSupported = false;
+            } catch (e3) {
+              console.error('All AR session configurations failed:', e3);
+              if (mounted) {
+                setError('AR session could not be started. Your device may not fully support AR.');
+                setStatus('error');
+                if (onFallback) {
+                  setTimeout(() => onFallback(), 2000);
+                }
+              }
+              return;
+            }
+          }
+        }
+
+        if (!mounted) {
+          if (session) session.end();
+          return;
+        }
+
+        setUseHitTest(hitTestSupported);
 
         xrSessionRef.current = session;
 
@@ -126,13 +197,26 @@ function WebXRAR({ item, onClose }) {
         scene.add(reticle);
         reticleRef.current = reticle;
 
-        // Get reference space
-        const refSpace = await session.requestReferenceSpace('local-floor');
+        // Get reference space - try local-floor first, fall back to viewer
+        let refSpace;
+        try {
+          refSpace = await session.requestReferenceSpace('local-floor');
+        } catch (e) {
+          console.log('local-floor not supported, using viewer');
+          refSpace = await session.requestReferenceSpace('viewer');
+        }
         xrRefSpaceRef.current = refSpace;
 
-        // Set up hit test source
-        const hitTestSource = await session.requestHitTestSource({ space: refSpace });
-        hitTestSourceRef.current = hitTestSource;
+        // Set up hit test source only if supported
+        if (hitTestSupported) {
+          try {
+            const hitTestSource = await session.requestHitTestSource({ space: refSpace });
+            hitTestSourceRef.current = hitTestSource;
+          } catch (e) {
+            console.log('Hit test not supported, AR will work without surface detection');
+            hitTestSupported = false;
+          }
+        }
 
         // Load 3D model
         const modelUrl = item.modelUrl || '/models/burger.glb';
@@ -159,12 +243,24 @@ function WebXRAR({ item, onClose }) {
           
           // Set realistic scale (in meters)
           model.scale.set(0.15, 0.15, 0.15);
-          model.visible = false; // Hide until placed
+          
+          if (hitTestSupported) {
+            // Hide until placed when surface detection is available
+            model.visible = false;
+            setStatus('searching');
+          } else {
+            // Show model directly when no surface detection
+            model.visible = true;
+            model.position.set(0, -0.5, -1); // Position in front of camera
+            setStatus('ready');
+            setModelPlaced(true);
+          }
+          
           scene.add(model);
           modelRef.current = model;
 
           // Start render loop
-          setStatus('searching');
+          if (!hitTestSupported) setStatus('ready');
           
           const onXRFrame = (time, frame) => {
             if (!mounted || !xrSessionRef.current) return;
@@ -252,6 +348,13 @@ function WebXRAR({ item, onClose }) {
     }
   };
 
+  const handleFallbackClick = () => {
+    cleanup();
+    if (onFallback) {
+      onFallback();
+    }
+  };
+
   if (status === 'error') {
     return (
       <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
@@ -259,9 +362,17 @@ function WebXRAR({ item, onClose }) {
           <div className="text-5xl mb-4">⚠️</div>
           <h2 className="text-white text-xl font-bold mb-2">AR Not Available</h2>
           <p className="text-gray-400 mb-6">{error}</p>
+          {onFallback && (
+            <button
+              onClick={handleFallbackClick}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold mb-3 w-full"
+            >
+              Try Camera AR Instead
+            </button>
+          )}
           <button
             onClick={handleExit}
-            className="bg-primary text-white px-6 py-3 rounded-lg font-semibold"
+            className="bg-primary text-white px-6 py-3 rounded-lg font-semibold w-full"
           >
             Go Back
           </button>
@@ -332,4 +443,3 @@ function WebXRAR({ item, onClose }) {
 }
 
 export default WebXRAR;
-

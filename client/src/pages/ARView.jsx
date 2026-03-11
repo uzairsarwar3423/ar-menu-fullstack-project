@@ -86,7 +86,16 @@ function ARView() {
 
   // Show selected AR mode
   if (arMode === 'webxr') {
-    return <WebXRAR item={item} onClose={() => navigate('/menu')} />;
+    return (
+      <WebXRAR 
+        item={item} 
+        onClose={() => navigate('/menu')}
+        onFallback={() => {
+          // Automatically switch to camera AR when WebXR fails
+          setArMode('camera');
+        }}
+      />
+    );
   }
 
   // Camera AR (original WebAR)

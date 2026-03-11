@@ -205,14 +205,29 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
     const initAR = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            facingMode: 'environment',
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          },
-          audio: false
-        });
+        // First, try to get back camera (environment)
+        // If that fails, try any available camera
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+        } catch (camErr) {
+          // Fallback: try without facingMode constraint
+          console.log('Back camera not available, trying any camera...');
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+        }
 
         if (!mounted) {
           stream.getTracks().forEach(track => track.stop());
@@ -221,6 +236,8 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute('playsinline', 'true');
+          videoRef.current.setAttribute('facing', 'environment');
           await videoRef.current.play();
         }
 

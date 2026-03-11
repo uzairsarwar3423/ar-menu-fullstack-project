@@ -205,26 +205,51 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
     const initAR = async () => {
       try {
-        // First, try to get back camera (environment)
-        // If that fails, try any available camera
+        // Enumerate devices to find back camera
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        
+        // Find back camera (environment facing)
+        let backCameraId = null;
+        for (const device of videoDevices) {
+          // Check for 'environment' label or facing mode
+          if (device.label.toLowerCase().includes('back') || 
+              device.label.toLowerCase().includes('rear') ||
+              device.label.toLowerCase().includes('environment')) {
+            backCameraId = device.deviceId;
+            break;
+          }
+        }
+        
+        // If no back camera found by label, try facingMode constraint
         let stream;
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
-            },
-            audio: false
-          });
+          if (backCameraId) {
+            // Use specific device ID
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { 
+                deviceId: { exact: backCameraId },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+              },
+              audio: false
+            });
+          } else {
+            // Try with facingMode constraint
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { 
+                facingMode: { exact: 'environment' },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+              },
+              audio: false
+            });
+          }
         } catch (camErr) {
-          // Fallback: try without facingMode constraint
-          console.log('Back camera not available, trying any camera...');
+          // Last resort: try any camera
+          console.log('Back camera not available, using any camera...');
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
-            },
+            video: true,
             audio: false
           });
         }
@@ -236,8 +261,6 @@ const WebAR = memo(function WebAR({ item, onClose }) {
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.setAttribute('playsinline', 'true');
-          videoRef.current.setAttribute('facing', 'environment');
           await videoRef.current.play();
         }
 
